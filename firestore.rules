@@ -1,0 +1,126 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myProfile() {
+      return get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && myProfile().isAdmin == true;
+    }
+
+    // Roster: pre-loaded by an admin (via the Firebase console or an
+    // admin-only setup script -- not exposed in the client app). Anyone
+    // signed in or not can READ a single entry by matric number, which is
+    // required for the signup lookup step to work before the student has
+    // an account. Only the claim transition is allowed from the client:
+    // claimed can only flip false -> true, and nothing else about the
+    // roster entry (name, birthday, admin flag) can be changed this way.
+    match /roster/{matric} {
+      allow get: if true;
+      allow list: if false;
+      allow update: if isSignedIn()
+        && resource.data.claimed == false
+        && request.resource.data.claimed == true
+        && request.resource.data.fullName == resource.data.fullName
+        && request.resource.data.birthday == resource.data.birthday
+        && request.resource.data.isAdmin == resource.data.isAdmin
+        && request.resource.data.matric == resource.data.matric;
+      allow create, delete: if false; // roster is seeded by an admin script, not the app
+    }
+
+    // Profiles: a student can create/read their own profile (created once,
+    // at claim time, with fields copied from the roster entry so isAdmin
+    // can't be self-granted) and update only their own fcmTokens list. Any
+    // signed-in user can read any profile (needed to show author names on
+    // posts/comments and to look up roster matches), but never list the
+    // whole collection from the client (bulk reads are a Cloud Function
+    // concern, using the Admin SDK which bypasses these rules).
+    match /profiles/{uid} {
+      allow get: if isSignedIn();
+      allow list: if false;
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.isAdmin == get(/databases/$(database)/documents/roster/$(request.resource.data.matric)).data.isAdmin;
+      allow update: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokens']);
+      allow delete: if false;
+    }
+
+    // Posts: anyone signed in can read; only admins can create. No
+    // edits/deletes from the client once posted (keeps the feed an
+    // append-only record; an admin needing to correct a mistake posts a
+    // follow-up rather than silently editing history).
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin()
+        && request.resource.data.authorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Comments: anyone signed in can read and add a comment on an
+    // ordinary post. Birthday-post comments (postId starting with
+    // "birthday_") are additionally gated: only allowed when the
+    // referenced birthday post's dateGenerated equals today's date in
+    // Africa/Lagos, computed server-side via request.time so a student
+    // can't spoof their device clock to comment early or late.
+    match /comments/{commentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.body.size() > 0
+        && request.resource.data.body.size() <= 500
+        && (
+          !request.resource.data.postId.matches('^birthday_.*')
+          || isTodaysBirthdayPost(request.resource.data.postId)
+        );
+      allow update, delete: if false;
+    }
+
+    function isTodaysBirthdayPost(postId) {
+      let birthdayDocId = postId.replace('birthday_', '');
+      let birthdayPost = get(/databases/$(database)/documents/birthdayPosts/$(birthdayDocId)).data;
+      return birthdayPost.dateGenerated == lagosTodayISODate();
+    }
+
+    // request.time is UTC; Lagos is UTC+1 year-round (no DST), so adding
+    // one hour before reading year/month/day gives the correct Lagos
+    // calendar date even in the window right around UTC midnight.
+    // request.time + duration already returns a rules.Timestamp (which
+    // has .year()/.month()/.day() directly) -- no .toDate() call exists
+    // or is needed in the rules language. The rules language has no
+    // locale-formatting helpers, so this builds the "YYYY-MM-DD" string
+    // manually from the shifted timestamp's parts.
+    function lagosTodayISODate() {
+      let lagosTime = request.time + duration.value(1, 'h');
+      return string(lagosTime.year()) + '-' + padMonthOrDay(lagosTime.month()) + '-' + padMonthOrDay(lagosTime.day());
+    }
+
+    function padMonthOrDay(n) {
+      return n < 10 ? '0' + string(n) : string(n);
+    }
+
+    // Birthday posts: readable by anyone signed in. Creation happens
+    // client-side the moment the birthday student opens the app that day
+    // (see useBirthdayPosts.ts) -- there's no server-side Cloud Function
+    // generating these (that would need the Blaze plan), so a birthday
+    // student who never opens the app that day simply won't get one.
+    // Tightly scoped so a student can only ever create their own post,
+    // only for today, and only matching their own stored birthday.
+    match /birthdayPosts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && request.resource.data.studentUid == request.auth.uid
+        && request.resource.data.dateGenerated == lagosTodayISODate()
+        && request.resource.data.birthday == myProfile().birthday
+        && postId == request.auth.uid + '_' + request.resource.data.dateGenerated;
+      allow update, delete: if false;
+    }
+  }
+}

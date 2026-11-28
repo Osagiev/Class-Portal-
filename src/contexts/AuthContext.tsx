@@ -14,7 +14,7 @@ import {
 } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { auth, db } from "../lib/firebase";
-import { matricToSyntheticEmail, normalizeMatric } from "../lib/matric";
+import { matricToDocId, matricToSyntheticEmail, normalizeMatric } from "../lib/matric";
 import type { RosterEntry, StudentProfile } from "../lib/types";
 
 interface AuthContextValue {
@@ -52,15 +52,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   async function checkRoster(matric: string): Promise<RosterEntry | null> {
-    const normalized = normalizeMatric(matric);
-    const snap = await getDoc(doc(db, "roster", normalized));
+    const docId = matricToDocId(matric);
+    const snap = await getDoc(doc(db, "roster", docId));
     if (!snap.exists()) return null;
     return snap.data() as RosterEntry;
   }
 
   async function claimAccount(matric: string, password: string) {
     const normalized = normalizeMatric(matric);
-    const rosterRef = doc(db, "roster", normalized);
+    const docId = matricToDocId(matric);
+    const rosterRef = doc(db, "roster", docId);
     const rosterSnap = await getDoc(rosterRef);
 
     if (!rosterSnap.exists()) {

@@ -22,8 +22,8 @@ export default defineConfig({
         name: 'Class Portal',
         short_name: 'Class Portal',
         description: 'Announcements, materials and updates for the class',
-        theme_color: '#4f46e5',
-        background_color: '#f8fafc',
+        theme_color: '#111111',
+        background_color: '#0b0b0c',
         display: 'standalone',
         start_url: '/',
         icons: [

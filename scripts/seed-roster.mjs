@@ -71,6 +71,13 @@ function normalizeMatric(raw) {
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
+// Firestore document IDs can't contain "/", and the Firebase console's UI
+// also rejects it, so the roster (and profiles) are keyed by this
+// slash-safe form -- must match matricToDocId() in src/lib/matric.ts.
+function matricToDocId(raw) {
+  return normalizeMatric(raw).replace(/\//g, "-");
+}
+
 const rows = parseCsv(csvRaw);
 console.log(`Found ${rows.length} roster row(s) in roster.csv.`);
 
@@ -83,7 +90,8 @@ for (const row of rows) {
     continue;
   }
   const matric = normalizeMatric(row.matric);
-  const ref = db.collection("roster").doc(matric);
+  const docId = matricToDocId(row.matric);
+  const ref = db.collection("roster").doc(docId);
   const existing = await ref.get();
 
   const data = {

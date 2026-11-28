@@ -37,20 +37,24 @@ service cloud.firestore {
 
     // Profiles: a student can create/read their own profile (created once,
     // at claim time, with fields copied from the roster entry so isAdmin
-    // can't be self-granted) and update only their own fcmTokens list. Any
-    // signed-in user can read any profile (needed to show author names on
-    // posts/comments and to look up roster matches), but never list the
-    // whole collection from the client (bulk reads are a Cloud Function
-    // concern, using the Admin SDK which bypasses these rules).
+    // can't be self-granted). Any signed-in user can read any profile
+    // (needed to show author names on posts/comments and to look up
+    // roster matches), but never list the whole collection from the
+    // client. Profiles are never edited after creation -- there's no
+    // client flow that changes a profile field, so updates are blocked
+    // outright.
     match /profiles/{uid} {
       allow get: if isSignedIn();
       allow list: if false;
       allow create: if isSignedIn() && request.auth.uid == uid
         && request.resource.data.uid == uid
-        && request.resource.data.isAdmin == get(/databases/$(database)/documents/roster/$(request.resource.data.matric)).data.isAdmin;
-      allow update: if isSignedIn() && request.auth.uid == uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['fcmTokens']);
-      allow delete: if false;
+        // The roster is keyed by a slash-safe document ID (see
+        // matricToDocId in matric.ts), but the profile's own "matric"
+        // field keeps the human-readable form with slashes, so it has
+        // to be re-encoded the same way before looking the roster entry
+        // up here.
+        && request.resource.data.isAdmin == get(/databases/$(database)/documents/roster/$(request.resource.data.matric.replace('/', '-'))).data.isAdmin;
+      allow update, delete: if false;
     }
 
     // Posts: anyone signed in can read; only admins can create. No

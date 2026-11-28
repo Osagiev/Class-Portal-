@@ -15,10 +15,22 @@ export function normalizeMatric(raw: string): string {
   return raw.trim().toUpperCase().replace(/\s+/g, "");
 }
 
+/**
+ * Firestore document IDs can technically contain "/", but the Firebase
+ * console's web UI can't: typing one into the Document ID field gets
+ * interpreted as a path separator instead of a literal character. Since
+ * roster entries are meant to be addable by hand through the console
+ * (no admin script required), the roster collection is keyed by this
+ * slash-safe form instead of the raw matric number. Two different
+ * matric numbers that only differ by slash placement would collide
+ * under this scheme, but that's not a real-world concern for matric
+ * numbers, which have a fixed slash-delimited format.
+ */
+export function matricToDocId(matric: string): string {
+  return normalizeMatric(matric).replace(/\//g, "-");
+}
+
 export function matricToSyntheticEmail(matric: string): string {
-  const normalized = normalizeMatric(matric);
-  // Firebase email identifiers can't contain "/" (common in matric numbers
-  // like CST/2021/045), so swap separators for a safe, reversible token.
-  const safe = normalized.replace(/\//g, "-");
-  return `${safe}@${SYNTHETIC_DOMAIN}`;
+  const docId = matricToDocId(matric);
+  return `${docId}@${SYNTHETIC_DOMAIN}`;
 }
